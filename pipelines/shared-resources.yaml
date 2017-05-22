@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Shared resources for CodePipeline
+Parameters:
+  DomainName:
+    Description: e.g example.com
+    Type: String
+    AllowedPattern: (?!-)[a-zA-Z0-9-.]{1,63}(?<![.-])
+    ConstraintDescription: Must be a valid domain name
+Resources:
+  CloudFormationTrustRole:
+    Description: Creating service role in IAM for AWS CloudFormation
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 
+        - "${tmp}-cloudformation-role"
+        - { tmp: !Select [0, !Split [".", !Ref DomainName]] }
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [cloudformation.amazonaws.com]
+          Action: sts:AssumeRole
+      Path: /
+  CloudFormationRolePolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: CloudFormationTrustRole
+    Description: Setting IAM policy for the service role for AWS CloudFormation
+    Properties:
+      PolicyName: CloudFormationRolePolicy
+      PolicyDocument:
+        Statement:
+        - Action: ["s3:GetObject", "s3:GetObjectVersion", "s3:GetBucketVersioning"]
+          Resource: "*"
+          Effect: Allow
+        - Action: ["s3:PutObject"]
+          Resource: ["arn:aws:s3:::codepipeline*"]
+          Effect: Allow
+        - Action: ["lambda:*"]
+          Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:*"
+          Effect: Allow
+        - Action: ["apigateway:*"]
+          Resource: !Sub "arn:aws:apigateway:${AWS::Region}::*"
+          Effect: Allow
+        - Action: ["iam:GetRole", "iam:CreateRole", "iam:DeleteRole"]
+          Resource: !Sub 
+            - "arn:aws:iam::${AWS::AccountId}:role/${tmp}-*"
+            - { tmp: !Select [0, !Split [".", !Ref DomainName]] }
+          Effect: Allow
+        - Action: ["iam:AttachRolePolicy", "iam:DetachRolePolicy"]
+          Resource: !Sub 
+            - "arn:aws:iam::${AWS::AccountId}:role/${tmp}-*"
+            - { tmp: !Select [0, !Split [".", !Ref DomainName]] }
+          Effect: Allow
+        - Action: ["iam:PassRole"]
+          Resource: ["*"]
+          Effect: Allow
+        - Action: ["cloudformation:CreateChangeSet"]
+          Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31"
+          Effect: Allow
+      Roles: [!Ref CloudFormationTrustRole]
+  CodePipelineTrustRole:
+    Description: Creating service role in IAM for AWS CodePipeline
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 
+        - "${tmp}-codepipeline-role"
+        - { tmp: !Select [0, !Split [".", !Ref DomainName]] }
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [codepipeline.amazonaws.com]
+          Action: sts:AssumeRole
+      Path: /
+  CodePipelineRolePolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: CodePipelineTrustRole
+    Description: Setting IAM policy for the service role for AWS CodePipeline
+    Properties:
+      PolicyName: CodePipelineRolePolicy
+      PolicyDocument:
+        Statement:
+        - Action: ["s3:GetObject", "s3:GetObjectVersion", "s3:GetBucketVersioning"]
+          Resource: "*"
+          Effect: Allow
+        - Action: ["s3:PutObject"]
+          Resource: ["arn:aws:s3:::codepipeline*"]
+          Effect: Allow
+        - Action: ["codebuild:StartBuild", "codebuild:BatchGetBuilds"]
+          Resource: "*"
+          Effect: Allow
+        - Action: ["cloudwatch:*", "s3:*", "sns:*", "cloudformation:*", "rds:*", "sqs:*", "iam:PassRole"]
+          Resource: "*"
+          Effect: Allow
+        - Action: ["lambda:InvokeFunction", "lambda:ListFunctions"]
+          Resource: "*"
+          Effect: Allow
+      Roles: [!Ref CodePipelineTrustRole]
+  S3ArtifactBucket:
+    Description: Creating Amazon S3 bucket for AWS CodePipeline artifacts
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub 
+        - "${tmp}-${AWS::AccountId}-${AWS::Region}-codepipeline-artifact"
+        - { tmp: !Select [0, !Split [".", !Ref DomainName]] }
+      VersioningConfiguration:
+        Status: Enabled
+  S3ArtifactBucketPolicy:
+    Description: Setting Amazon S3 bucket policy for AWS CodePipeline access
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3ArtifactBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Id: SSEAndSSLPolicy
+        Statement:
+        - Sid: DenyInsecureConnections
+          Effect: Deny
+          Principal: "*"
+          Action: s3:*
+          Resource: !Sub "arn:aws:s3:::${S3ArtifactBucket}/*"
+          Condition:
+            Bool:
+              aws:SecureTransport: false
+Outputs:
+  CodePipelineRole:
+    Description: "Role for code pipeline"
+    Value: !GetAtt CodePipelineTrustRole.Arn
+    Export:
+      Name: !Sub 
+        - "${tmp}-CodePipelineRoleArn"
+        - { tmp: !Select [0, !Split [".", !Ref DomainName]] }
+  CloudformationRole:
+    Description: "Role for cloudformation"
+    Value: !GetAtt CloudFormationTrustRole.Arn
+    Export:
+      Name: !Sub 
+        - "${tmp}-CloudformationRoleArn"
+        - { tmp: !Select [0, !Split [".", !Ref DomainName]] }
+  S3ArtifactBucket:
+    Description: "S3ArtifactBucket"
+    Value: !Ref S3ArtifactBucket
+    Export:
+      Name: !Sub 
+        - "${tmp}-S3ArtifactBucket"
+        - { tmp: !Select [0, !Split [".", !Ref DomainName]] }
